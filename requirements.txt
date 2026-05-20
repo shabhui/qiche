@@ -1,0 +1,7 @@
+scrapy
+flask
+flask-cors
+pandas
+snownlp
+sqlalchemy
+pymysql

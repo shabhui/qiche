@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>太平洋汽车网数据分析系统</title>
+    <link rel="stylesheet" href="https://unpkg.com/element-ui/lib/theme-chalk/index.css">
+    <script src="https://unpkg.com/vue@2/dist/vue.js"></script>
+    <script src="https://unpkg.com/element-ui/lib/index.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        .el-header { background-color: #409EFF; color: white; line-height: 60px; }
+        .car-card { margin-bottom: 20px; cursor: pointer; transition: transform 0.2s; }
+        .car-card:hover { transform: translateY(-5px); box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        .price { color: #f56c6c; font-weight: bold; }
+        .rating { color: #e6a23c; }
+    </style>
+</head>
+<body>
+<div id="app">
+    <el-container>
+        <el-header>
+            <h2>🚗 太平洋汽车网 · 车型口碑分析系统</h2>
+        </el-header>
+        <el-main>
+            <!-- 筛选栏 -->
+            <el-form :inline="true" :model="filters" size="small" class="filter-form">
+                <el-form-item label="品牌">
+                    <el-input v-model="filters.brand" placeholder="如：大众" clearable></el-input>
+                </el-form-item>
+                <el-form-item label="车型">
+                    <el-input v-model="filters.model" placeholder="如：朗逸" clearable></el-input>
+                </el-form-item>
+                <el-form-item label="车辆级别">
+                    <el-select v-model="filters.category" clearable placeholder="全部">
+                        <el-option label="微型车" value="微型车"></el-option>
+                        <el-option label="小型车" value="小型车"></el-option>
+                        <el-option label="紧凑型车" value="紧凑型车"></el-option>
+                        <el-option label="中型车" value="中型车"></el-option>
+                        <el-option label="中大型车" value="中大型车"></el-option>
+                        <el-option label="SUV" value="SUV"></el-option>
+                        <el-option label="MPV" value="MPV"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="价格区间(万元)">
+                    <el-input-number v-model="filters.price_min" :min="0" :max="200" placeholder="最低价" controls-position="right"></el-input-number>
+                    <span style="margin:0 8px">-</span>
+                    <el-input-number v-model="filters.price_max" :min="0" :max="200" placeholder="最高价" controls-position="right"></el-input-number>
+                </el-form-item>
+                <el-form-item>
+                    <el-button type="primary" @click="search">搜索</el-button>
+                    <el-button @click="reset">重置</el-button>
+                    <el-button @click="gotoDashboard">数据大屏</el-button>
+                </el-form-item>
+            </el-form>
+
+            <!-- 车型列表 -->
+            <el-row :gutter="20">
+                <el-col :span="6" v-for="car in cars" :key="car.car_id" class="car-card">
+                    <el-card>
+                        <div>
+                            <h4>{{ car.model }} <span style="font-size:14px; color:#909399;">({{ car.brand }})</span></h4>
+                            <p><span class="price">{{ car.price_range || '暂无报价' }}</span></p>
+                            <p>级别：{{ car.category || '未分类' }}</p>
+                            <p>发动机：{{ car.engine || '-' }} | 变速箱：{{ car.transmission || '-' }}</p>
+                            <p>油耗：{{ car.fuel_consumption || '-' }} L/100km</p>
+                            <p class="rating">用户评分：{{ car.rating || '暂无' }} ☆</p>
+                            <el-button size="small" @click="viewComments(car)">查看口碑</el-button>
+                            <el-button size="small" type="warning" @click="addToCompare(car)">对比</el-button>
+                        </div>
+                    </el-card>
+                </el-col>
+            </el-row>
+
+            <!-- 分页 -->
+            <el-pagination
+                @current-change="handlePageChange"
+                :current-page="page+1"
+                :page-size="size"
+                layout="total, prev, pager, next"
+                :total="total"
+                style="margin-top:20px; text-align:center">
+            </el-pagination>
+        </el-main>
+    </el-container>
+
+    <!-- 对比对话框 -->
+    <el-dialog title="车型参数对比" :visible.sync="compareDialog" width="80%">
+        <el-table :data="compareCars" border>
+            <el-table-column prop="model" label="车型" width="150"></el-table-column>
+            <el-table-column prop="brand" label="品牌" width="100"></el-table-column>
+            <el-table-column prop="price_range" label="价格(万元)" width="120"></el-table-column>
+            <el-table-column prop="category" label="级别" width="100"></el-table-column>
+            <el-table-column prop="engine" label="发动机" width="120"></el-table-column>
+            <el-table-column prop="transmission" label="变速箱" width="100"></el-table-column>
+            <el-table-column prop="fuel_consumption" label="油耗(L/100km)" width="120"></el-table-column>
+            <el-table-column prop="rating" label="用户评分" width="100"></el-table-column>
+        </el-table>
+        <span slot="footer"><el-button @click="compareDialog=false">关闭</el-button></span>
+    </el-dialog>
+
+    <!-- 评论对话框（带情感分析） -->
+    <el-dialog :title="selectedCar ? selectedCar.model + ' 用户口碑' : '口碑详情'" :visible.sync="commentsDialog" width="60%">
+        <div v-if="selectedCar">
+            <el-tabs v-model="activeTab">
+                <el-tab-pane label="口碑列表" name="list">
+                    <div v-for="(c, idx) in comments" :key="idx" style="border-bottom:1px solid #eee; margin-bottom:10px; padding-bottom:10px;">
+                        <p><strong>{{ c.nickname || '匿名用户' }}</strong> 发表于 {{ c.publish_time || '未知' }}</p>
+                        <p>购车价格：{{ c.purchase_price || '-' }} 万元 | 评分：{{ c.rating || '-' }}星</p>
+                        <p><span style="color:green">优点：</span>{{ c.advantages || '-' }}</p>
+                        <p><span style="color:red">缺点：</span>{{ c.disadvantages || '-' }}</p>
+                        <p>{{ c.comment_text || c.comment }}</p>
+                    </div>
+                    <el-pagination
+                        small
+                        @current-change="loadCommentsPage"
+                        :current-page="commentPage+1"
+                        :page-size="commentSize"
+                        layout="prev, pager, next"
+                        :total="commentTotal">
+                    </el-pagination>
+                </el-tab-pane>
+                <el-tab-pane label="情感分析" name="sentiment">
+                    <div v-if="sentimentScore !== null">
+                        <h3>综合情感倾向得分：{{ sentimentScore.toFixed(3) }}</h3>
+                        <el-progress :percentage="sentimentScore*100" :color="sentimentScore>0.6?'#67c23a':'#e6a23c'"></el-progress>
+                        <p style="margin-top:20px">得分越接近1表示用户评价越正面，接近0表示负面。</p>
+                    </div>
+                    <div v-else>暂无评论数据，无法分析情感。</div>
+                </el-tab-pane>
+            </el-tabs>
+        </div>
+        <span slot="footer"><el-button @click="commentsDialog=false">关闭</el-button></span>
+    </el-dialog>
+</div>
+
+<script>
+/* global axios */
+new Vue({
+    el: '#app',
+    data: {
+        filters: { brand: '', model: '', category: '', price_min: null, price_max: null },
+        cars: [],
+        page: 0,
+        size: 8,
+        total: 0,
+        compareList: [],      // 存放待对比的 car_id
+        compareCars: [],
+        compareDialog: false,
+        commentsDialog: false,
+        selectedCar: null,
+        comments: [],
+        commentPage: 0,
+        commentSize: 10,
+        commentTotal: 0,
+        activeTab: 'list',
+        sentimentScore: null
+    },
+    mounted() {
+        this.search();
+    },
+    methods: {
+        search() {
+            axios.get('http://localhost:5000/api/cars/search', {
+                params: {
+                    brand: this.filters.brand,
+                    model: this.filters.model,
+                    category: this.filters.category,
+                    price_min: this.filters.price_min,
+                    price_max: this.filters.price_max,
+                    page: this.page,
+                    size: this.size
+                }
+            }).then(res => {
+                this.cars = res.data.content;
+                this.total = res.data.totalElements;
+            }).catch(err => console.error('搜索失败', err));
+        },
+        reset() {
+            this.filters = { brand: '', model: '', category: '', price_min: null, price_max: null };
+            this.page = 0;
+            this.search();
+        },
+        handlePageChange(p) {
+            this.page = p - 1;
+            this.search();
+        },
+        addToCompare(car) {
+            if (this.compareList.length >= 3) {
+                this.$message.warning('最多对比3款车型');
+                return;
+            }
+            if (!this.compareList.includes(car.car_id)) {
+                this.compareList.push(car.car_id);
+                this.$message.success(`已添加 ${car.model} 到对比列表`);
+            }
+            if (this.compareList.length > 1) {
+                this.doCompare();
+            }
+        },
+        doCompare() {
+            axios.get('http://localhost:5000/api/cars/compare', {
+                params: { ids: this.compareList.join(',') }
+            }).then(res => {
+                this.compareCars = res.data;
+                this.compareDialog = true;
+            }).catch(err => console.error(err));
+        },
+        viewComments(car) {
+            this.selectedCar = car;
+            this.commentPage = 0;
+            this.sentimentScore = null;
+            this.loadComments();
+            this.commentsDialog = true;
+        },
+        loadComments() {
+            axios.get(`http://localhost:5000/api/cars/comments/${this.selectedCar.car_id}`, {
+                params: { page: this.commentPage, size: this.commentSize }
+            }).then(res => {
+                this.comments = res.data.comments;
+                this.commentTotal = res.data.total;
+                // 简单情感分析：如果后端提供了/sentiment接口，可以调用；这里用前端简单统计正面关键词比例（示例）
+                this.calcSentiment();
+            }).catch(err => console.error(err));
+        },
+        loadCommentsPage(p) {
+            this.commentPage = p - 1;
+            this.loadComments();
+        },
+        calcSentiment() {
+            if (this.comments.length === 0) {
+                this.sentimentScore = null;
+                return;
+            }
+            // 简易情感分析：基于正面词和负面词计数
+            const positiveWords = ['满意', '不错', '好', '推荐', '值得', '性价比高', '省油', '动力足', '空间大'];
+            const negativeWords = ['差', '失望', '后悔', '故障', '毛病', '顿挫', '异响', '费油'];
+            let posCount = 0, negCount = 0;
+            this.comments.forEach(c => {
+                const text = (c.comment_text || '') + (c.advantages || '') + (c.disadvantages || '');
+                positiveWords.forEach(w => { if (text.includes(w)) posCount++; });
+                negativeWords.forEach(w => { if (text.includes(w)) negCount++; });
+            });
+            const total = posCount + negCount;
+            this.sentimentScore = total === 0 ? 0.5 : posCount / total;
+        },
+        gotoDashboard() {
+            window.open('dashboard.html', '_blank');
+        }
+    }
+});
+</script>
+</body>
+</html>
