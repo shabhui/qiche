@@ -1,43 +1,64 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3
+import re
+import os
 
 app = Flask(__name__)
 CORS(app)
 
+
 def get_db():
-    conn = sqlite3.connect('data/pcauto.db')
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(base_dir)
+    db_path = os.path.join(project_root, 'data', 'pcauto.db')
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
+
+# 搜索车型（含价格筛选）
 @app.route('/api/cars/search')
 def search_cars():
     brand = request.args.get('brand', '')
     model = request.args.get('model', '')
     category = request.args.get('category', '')
-    price_min = request.args.get('price_min', type=int)
-    price_max = request.args.get('price_max', type=int)
+    price_min = request.args.get('price_min', type=float)
+    price_max = request.args.get('price_max', type=float)
     page = request.args.get('page', 0, type=int)
     size = request.args.get('size', 10, type=int)
 
     conn = get_db()
     cursor = conn.cursor()
-    query = "SELECT * FROM cars WHERE 1=1"
+
+    # 动态提取最低价作为 min_price，并进行过滤
+    query = """
+            SELECT *,
+                   CAST(
+                           CASE
+                               WHEN price LIKE '%-%' THEN SUBSTR(price, 1, INSTR(price, '-') - 1)
+                               WHEN price LIKE '%起%' THEN REPLACE(SUBSTR(price, 1, INSTR(price, '万') - 1), ' ', '')
+                               ELSE REPLACE(SUBSTR(price, 1, INSTR(price, '万') - 1), ' ', '')
+                               END AS REAL
+                   ) AS min_price
+            FROM cars
+            WHERE 1 = 1 \
+            """
     params = []
+
     if brand:
         query += " AND brand LIKE ?"
         params.append(f'%{brand}%')
     if model:
-        query += " AND model LIKE ?"
+        query += " AND model_name LIKE ?"
         params.append(f'%{model}%')
-    if category:
-        query += " AND category = ?"
-        params.append(category)
-    if price_min:
-        query += " AND CAST(SUBSTR(price_range, 1, INSTR(price_range, '-')-1) AS REAL) >= ?"
+
+    # 价格筛选（使用 min_price 列）
+    if price_min is not None:
+        query += " AND min_price >= ?"
         params.append(price_min)
-    if price_max:
-        query += " AND CAST(SUBSTR(price_range, INSTR(price_range, '-')+1, LENGTH(price_range)-INSTR(price_range, '-')-4) AS REAL) <= ?"
+    if price_max is not None:
+        query += " AND min_price <= ?"
         params.append(price_max)
 
     # 获取总数
@@ -45,6 +66,7 @@ def search_cars():
     cursor.execute(count_query, params)
     total = cursor.fetchone()[0]
 
+    # 分页
     query += " LIMIT ? OFFSET ?"
     params.extend([size, page * size])
     cursor.execute(query, params)
@@ -55,36 +77,38 @@ def search_cars():
     return jsonify({'content': cars, 'totalElements': total})
 
 
+# 车型对比
 @app.route('/api/cars/compare')
 def compare_cars():
-    """多车型对比接口"""
-    ids = request.args.get('ids', '').split(',')
-    if not ids or ids == ['']:
+    ids = request.args.get('ids', '')
+    if not ids:
         return jsonify([])
-    placeholders = ','.join('?' * len(ids))
+    ids_list = ids.split(',')
+    placeholders = ','.join('?' * len(ids_list))
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute(f"SELECT * FROM cars WHERE car_id IN ({placeholders})", ids)
+    cursor.execute(f"SELECT * FROM cars WHERE car_id IN ({placeholders})", ids_list)
     rows = cursor.fetchall()
     conn.close()
     return jsonify([dict(row) for row in rows])
 
 
+# 获取车型评论
 @app.route('/api/cars/comments/<car_id>')
-def get_car_comments(car_id):
-    """获取某个车型的评论列表（支持分页）"""
+def get_comments(car_id):
     page = request.args.get('page', 0, type=int)
-    size = request.args.get('size', 20, type=int)
+    size = request.args.get('size', 10, type=int)
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM car_comments WHERE car_id = ?", (car_id,))
+    cursor.execute("SELECT COUNT(*) FROM comments WHERE car_id=?", (car_id,))
     total = cursor.fetchone()[0]
     cursor.execute("""
-        SELECT nickname, publish_time, purchase_price, rating, 
-               advantages, disadvantages, comment_text
-        FROM car_comments WHERE car_id = ? 
-        ORDER BY crawled_at DESC LIMIT ? OFFSET ?
-    """, (car_id, size, page * size))
+                   SELECT nickname, publish_time, purchase_price, rating, advantages, disadvantages, full_comment
+                   FROM comments
+                   WHERE car_id = ?
+                   ORDER BY id DESC LIMIT ?
+                   OFFSET ?
+                   """, (car_id, size, page * size))
     rows = cursor.fetchall()
     conn.close()
     return jsonify({
@@ -93,18 +117,16 @@ def get_car_comments(car_id):
     })
 
 
+# 品牌统计
 @app.route('/api/stats/brands')
 def brand_stats():
-    """品牌销量/热度统计"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
-        SELECT brand, COUNT(*) as car_count, AVG(rating) as avg_rating 
-        FROM cars GROUP BY brand ORDER BY car_count DESC
-    """)
+    cursor.execute(
+        "SELECT brand, COUNT(*) as car_count FROM cars WHERE brand IS NOT NULL GROUP BY brand ORDER BY car_count DESC")
     rows = cursor.fetchall()
     conn.close()
-    return jsonify([dict(row) for row in rows])
+    return jsonify([{'brand': r['brand'], 'count': r['car_count']} for r in rows])
 
 
 if __name__ == '__main__':
