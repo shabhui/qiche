@@ -78,6 +78,7 @@ def search_cars():
 
 
 # 车型对比
+# 车型对比
 @app.route('/api/cars/compare')
 def compare_cars():
     ids = request.args.get('ids', '')
@@ -87,7 +88,14 @@ def compare_cars():
     placeholders = ','.join('?' * len(ids_list))
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute(f"SELECT * FROM cars WHERE car_id IN ({placeholders})", ids_list)
+    cursor.execute(f"""
+        SELECT c.car_id, c.model_name, c.brand, c.price,
+               ROUND(AVG(co.rating), 1) AS avg_rating
+        FROM cars c
+        LEFT JOIN comments co ON c.car_id = co.car_id
+        WHERE c.car_id IN ({placeholders})
+        GROUP BY c.car_id
+    """, ids_list)
     rows = cursor.fetchall()
     conn.close()
     return jsonify([dict(row) for row in rows])
@@ -102,6 +110,10 @@ def get_comments(car_id):
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM comments WHERE car_id=?", (car_id,))
     total = cursor.fetchone()[0]
+    cursor.execute("SELECT AVG(rating) FROM comments WHERE car_id=? AND rating > 0", (car_id,))
+    avg_row = cursor.fetchone()
+    avg_rating = round(avg_row[0], 2) if avg_row and avg_row[0] else None
+
     cursor.execute("""
                    SELECT nickname, publish_time, purchase_price, rating, advantages, disadvantages, full_comment
                    FROM comments
@@ -113,7 +125,8 @@ def get_comments(car_id):
     conn.close()
     return jsonify({
         'comments': [dict(row) for row in rows],
-        'total': total
+        'total': total,
+        'avg_rating': avg_rating  # 新增：返回总体平均评分
     })
 
 
