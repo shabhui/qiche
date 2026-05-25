@@ -1,7 +1,7 @@
 import scrapy
 import re
-from urllib.parse import urljoin
 from ..items import PCautoCarItem, PCautoCommentItem
+
 
 class PcautoSpider(scrapy.Spider):
     name = 'pcauto'
@@ -11,13 +11,32 @@ class PcautoSpider(scrapy.Spider):
         'https://price.pcauto.com.cn/top/sales/s2-t1.html',   # SUV榜
     ]
 
-    def parse(self, response):
-        # 调试：保存实际响应内容，方便核对（可选，跑通后可删除）
-        with open('debug_sales_real.html', 'w', encoding='utf-8') as f:
-            f.write(response.text)
-        self.logger.info(f"已保存实际页面到 debug_sales_real.html")
+    MAX_COMMENT_PAGES = 5
 
-        # 最稳健的 XPath：直接定位到包含车型链接的表格行
+    # ==================== 工具方法 ====================
+
+    @staticmethod
+    def _extract_car_id(url):
+        match = re.search(r'sg(\d+)', url)
+        return match.group(1) if match else None
+
+    @staticmethod
+    def _clean(text):
+        return text.strip() if text else ''
+
+    @staticmethod
+    def _find_next_url(response):
+        """统一查找下一页链接（兼容不同写法）"""
+        for xpath in ('//a[@class="next"]/@href',
+                      '//a[contains(text(),"下一页")]/@href'):
+            url = response.xpath(xpath).get()
+            if url:
+                return response.urljoin(url)
+        return None
+
+    # ==================== 主回调 ====================
+
+    def parse(self, response):
         rows = response.xpath('//tr[td[@class="col2 brand"]]')
         self.logger.info(f"共找到 {len(rows)} 个车型行")
 
@@ -26,137 +45,127 @@ class PcautoSpider(scrapy.Spider):
             if not car_link:
                 continue
 
-            car_name = row.xpath('.//td[@class="col2 brand"]/a/text()').get()
-            price = row.xpath('.//td[@class="col3 price"]/text()').get()
-            brand = row.xpath('.//td[@class="col4 relBrand"]/a/text()').get()
-
-            import re
-            car_id_match = re.search(r'sg(\d+)', car_link)
-            if not car_id_match:
+            car_id = self._extract_car_id(car_link)
+            if not car_id:
                 continue
-            car_id = car_id_match.group(1)
 
             car_item = PCautoCarItem()
             car_item['car_id'] = car_id
-            car_item['model_name'] = car_name.strip() if car_name else ''
-            car_item['brand'] = brand.strip() if brand else ''
-            car_item['price'] = price.strip() if price else ''
+            car_item['model_name'] = self._clean(
+                row.xpath('.//td[@class="col2 brand"]/a/text()').get()
+            )
+            car_item['brand'] = self._clean(
+                row.xpath('.//td[@class="col4 relBrand"]/a/text()').get()
+            )
+            car_item['price'] = self._clean(
+                row.xpath('.//td[@class="col3 price"]/text()').get()
+            )
             yield car_item
 
-            comment_url = f'https://price.pcauto.com.cn/comment/sg{car_id}/'
             yield scrapy.Request(
-                comment_url,
+                f'https://price.pcauto.com.cn/comment/sg{car_id}/t1/p1.html',
                 callback=self.parse_comments,
                 meta={'car_id': car_id, 'page_num': 1}
             )
 
-        # 处理销量榜分页（如果有下一页）
-        next_page = response.xpath('//a[@class="next"]/@href').get()
-        if not next_page:
-            next_page = response.xpath('//a[contains(text(),"下一页")]/@href').get()
-        if next_page:
-            yield scrapy.Request(response.urljoin(next_page), callback=self.parse)
+        # 销量榜翻页
+        next_url = self._find_next_url(response)
+        if next_url:
+            yield scrapy.Request(next_url, callback=self.parse)
 
     def parse_car_detail(self, response):
-        # 提取车型 ID
-        match = re.search(r'sg(\d+)', response.url)
-        if not match:
+        car_id = self._extract_car_id(response.url)
+        if not car_id:
             return
-        car_id = match.group(1)
 
         car_item = PCautoCarItem()
         car_item['car_id'] = car_id
-
-        # 1. 车型名称：取自面包屑的最后一个 <a> 标签
-        model_name = response.xpath('//div[@class="position"]/a[last()]/text()').get()
-        car_item['model_name'] = model_name.strip() if model_name else ''
-
-        # 2. 品牌：取自面包屑的倒数第三个 <a> 标签（例如“东风风行”）
-        brand = response.xpath('//div[@class="position"]/a[last()-2]/text()').get()
-        car_item['brand'] = brand.strip() if brand else ''
-
-        # 3. 价格区间：官方指导价所在的 <em class="price">
-        price = response.xpath('//em[@class="price"]/text()').get()
-        car_item['price'] = price.strip() if price else ''
-
+        car_item['model_name'] = self._clean(
+            response.xpath('//div[@class="position"]/a[last()]/text()').get()
+        )
+        car_item['brand'] = self._clean(
+            response.xpath('//div[@class="position"]/a[last()-2]/text()').get()
+        )
+        car_item['price'] = self._clean(
+            response.xpath('//em[@class="price"]/text()').get()
+        )
         yield car_item
 
-        # 请求评论页
-        comment_url = f'https://price.pcauto.com.cn/comment/sg{car_id}/'
-        yield scrapy.Request(comment_url, callback=self.parse_comments,
-                             meta={'car_id': car_id, 'page_num': 1})
+        yield scrapy.Request(
+            f'https://price.pcauto.com.cn/comment/sg{car_id}/t1/p1.html',
+            callback=self.parse_comments,
+            meta={'car_id': car_id, 'page_num': 1}
+        )
 
     def parse_comments(self, response):
         car_id = response.meta['car_id']
         current_page = response.meta.get('page_num', 1)
-        max_pages = 5  # 每个车型最多抓取5页，可根据需要修改
 
-        if current_page > max_pages:
-            self.logger.info(f"Reached max pages ({max_pages}) for car {car_id}, stopping.")
+        if current_page > self.MAX_COMMENT_PAGES:
+            self.logger.info(f"车型 {car_id} 已达最大页数 {self.MAX_COMMENT_PAGES}，停止翻页")
             return
 
-        # 定位每一条评论的根节点
         comment_nodes = response.xpath('//div[@class="litDy clearfix"]')
-        self.logger.info(f"Found {len(comment_nodes)} comments for car {car_id} (page {current_page})")
+        self.logger.info(f"车型 {car_id} 第 {current_page} 页，共 {len(comment_nodes)} 条评论")
 
         for node in comment_nodes:
-            item = PCautoCommentItem()
-            item['car_id'] = car_id
+            yield self._build_comment_item(node, car_id)
 
-            # 1. 用户名
-            nickname = node.xpath('.//div[@class="txBox"]//p/a/text()').get()
-            item['nickname'] = nickname.strip() if nickname else ''
-
-            # 2. 发表时间（格式如 "2022-08-10 发表"）
-            pub_time = node.xpath('.//div[@class="txBox"]//span/a/text()').get()
-            if pub_time:
-                pub_time = pub_time.replace('发表', '').strip()
-            item['publish_time'] = pub_time
-
-            # 3. 裸车价格（万元）
-            price_text = node.xpath(
-                './/div[@class="line"]/em[contains(text(),"裸车价格")]/following-sibling::i/text()').get()
-            item['purchase_price'] = price_text.strip() if price_text else ''
-
-            # 4. 综合评分（从 meter 脚本中提取）
-            meter_script = node.xpath('.//script[contains(text(),"new Meter")]/text()').get()
-            rating_val = 0.0
-            if meter_script:
-                import re
-                match = re.search(r"'score'\s*:\s*'?([\d.]+)'?", meter_script)
-                if match:
-                    rating_val = float(match.group(1))
-            item['rating'] = rating_val
-
-            # 5. 优点
-            advantages = node.xpath('.//div[@class="conLit youdian"]/span/text()').get()
-            item['advantages'] = advantages.strip() if advantages else ''
-
-            # 6. 缺点
-            disadvantages = node.xpath('.//div[@class="conLit quedian"]/span/text()').get()
-            item['disadvantages'] = disadvantages.strip() if disadvantages else ''
-
-            # 7. 完整评论文本（拼接所有分类）
-            all_parts = node.xpath('.//div[@class="dianPing"]/div[@class="conLit"]')
-            full_text_list = []
-            for part in all_parts:
-                category = part.xpath('.//b/text()').get(default='').strip()
-                text = part.xpath('.//span/text()').get(default='').strip()
-                if category and text:
-                    full_text_list.append(f"{category}{text}")
-                elif text:
-                    full_text_list.append(text)
-            item['full_comment'] = '\n'.join(full_text_list)
-
-            yield item
-
-        # 处理翻页
-        next_page = response.xpath('//a[@class="next"]/@href').get()
-        if not next_page:
-            next_page = response.xpath('//a[contains(text(),"下一页")]/@href').get()
-        if next_page:
+        # 直接构造下一页 URL
+        next_page_num = current_page + 1
+        if next_page_num <= self.MAX_COMMENT_PAGES:
+            next_url = f'https://price.pcauto.com.cn/comment/sg{car_id}/t1/p{next_page_num}.html'
             yield scrapy.Request(
-                response.urljoin(next_page),
+                next_url,
                 callback=self.parse_comments,
-                meta={'car_id': car_id, 'page_num': current_page + 1}
+                meta={'car_id': car_id, 'page_num': next_page_num}
             )
+
+    # ==================== 评论解析 ====================
+
+    def _build_comment_item(self, node, car_id):
+        item = PCautoCommentItem()
+        item['car_id'] = car_id
+
+        item['nickname'] = self._clean(
+            node.xpath('.//div[@class="txBox"]//p/a/text()').get()
+        )
+
+        pub_time = node.xpath('.//div[@class="txBox"]//span/a/text()').get()
+        item['publish_time'] = pub_time.replace('发表', '').strip() if pub_time else ''
+
+        item['purchase_price'] = self._clean(
+            node.xpath('.//div[@class="line"]/em[contains(text(),"裸车价格")]/following-sibling::i/text()').get()
+        )
+
+        item['rating'] = self._extract_rating(node)
+
+        item['advantages'] = self._clean(
+            node.xpath('.//div[@class="conLit youdian"]/span/text()').get()
+        )
+        item['disadvantages'] = self._clean(
+            node.xpath('.//div[@class="conLit quedian"]/span/text()').get()
+        )
+
+        item['full_comment'] = self._build_full_text(node)
+        return item
+
+    @staticmethod
+    def _extract_rating(node):
+        script = node.xpath('.//script[contains(text(),"new Meter")]/text()').get()
+        if not script:
+            return 0.0
+        match = re.search(r"'score'\s*:\s*'?([\d.]+)'?", script)
+        return float(match.group(1)) if match else 0.0
+
+    @staticmethod
+    def _build_full_text(node):
+        parts = []
+        for part in node.xpath('.//div[@class="dianPing"]/div[@class="conLit"]'):
+            category = part.xpath('b/text()').get(default='').strip()
+            text = part.xpath('span/text()').get(default='').strip()
+            if category and text:
+                parts.append(f"{category}{text}")
+            elif text:
+                parts.append(text)
+        return '\n'.join(parts)
