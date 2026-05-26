@@ -1,17 +1,23 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import sqlite3
-import re
 import os
-
+import sys
 app = Flask(__name__)
 CORS(app)
 
 
+
+
 def get_db():
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(base_dir)
-    db_path = os.path.join(project_root, 'data', 'pcauto.db')
+    # 判断是否是 PyInstaller 打包后的 exe 运行
+    if getattr(sys, 'frozen', False):
+        # exe 所在目录
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        # 开发环境：app.py 所在目录的父目录（项目根目录）
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    db_path = os.path.join(base_dir, 'data', 'pcauto.db')
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
