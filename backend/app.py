@@ -3,27 +3,27 @@ from flask_cors import CORS
 import sqlite3
 import os
 import sys
+
 app = Flask(__name__)
 CORS(app)
 
 
-
-
 def get_db():
-    # 判断是否是 PyInstaller 打包后的 exe 运行
+    # 根据运行环境定位数据库文件
     if getattr(sys, 'frozen', False):
-        # exe 所在目录
+        # 打包为 exe 后，数据库位于程序所在目录
         base_dir = os.path.dirname(sys.executable)
     else:
-        # 开发环境：app.py 所在目录的父目录（项目根目录）
+        # 开发环境下，数据库位于项目根目录
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
     db_path = os.path.join(base_dir, 'data', 'pcauto.db')
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
 
 
-# 搜索车型（含价格筛选）
+# 搜索车型，支持价格区间筛选
 @app.route('/api/cars/search')
 def search_cars():
     brand = request.args.get('brand', '')
@@ -37,7 +37,7 @@ def search_cars():
     conn = get_db()
     cursor = conn.cursor()
 
-    # 动态提取最低价作为 min_price，并进行过滤
+    # 从价格文本中提取最低价，用于区间筛选
     query = """
             SELECT *,
                    CAST(
@@ -59,7 +59,7 @@ def search_cars():
         query += " AND model_name LIKE ?"
         params.append(f'%{model}%')
 
-    # 价格筛选（使用 min_price 列）
+    # 使用提取出的最低价进行筛选
     if price_min is not None:
         query += " AND min_price >= ?"
         params.append(price_min)
@@ -67,12 +67,12 @@ def search_cars():
         query += " AND min_price <= ?"
         params.append(price_max)
 
-    # 获取总数
+    # 统计符合条件的车型总数
     count_query = f"SELECT COUNT(*) FROM ({query})"
     cursor.execute(count_query, params)
     total = cursor.fetchone()[0]
 
-    # 分页
+    # 分页返回当前结果
     query += " LIMIT ? OFFSET ?"
     params.extend([size, page * size])
     cursor.execute(query, params)
@@ -84,12 +84,12 @@ def search_cars():
 
 
 # 车型对比
-# 车型对比
 @app.route('/api/cars/compare')
 def compare_cars():
     ids = request.args.get('ids', '')
     if not ids:
         return jsonify([])
+
     ids_list = ids.split(',')
     placeholders = ','.join('?' * len(ids_list))
     conn = get_db()
@@ -107,11 +107,12 @@ def compare_cars():
     return jsonify([dict(row) for row in rows])
 
 
-# 获取车型评论
+# 获取指定车型的评论列表
 @app.route('/api/cars/comments/<car_id>')
 def get_comments(car_id):
     page = request.args.get('page', 0, type=int)
     size = request.args.get('size', 10, type=int)
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM comments WHERE car_id=?", (car_id,))
@@ -129,20 +130,22 @@ def get_comments(car_id):
                    """, (car_id, size, page * size))
     rows = cursor.fetchall()
     conn.close()
+
     return jsonify({
         'comments': [dict(row) for row in rows],
         'total': total,
-        'avg_rating': avg_rating  # 新增：返回总体平均评分
+        'avg_rating': avg_rating  # 返回当前车型的平均评分
     })
 
 
-# 品牌统计
+# 统计各品牌车型数量
 @app.route('/api/stats/brands')
 def brand_stats():
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT brand, COUNT(*) as car_count FROM cars WHERE brand IS NOT NULL GROUP BY brand ORDER BY car_count DESC")
+        "SELECT brand, COUNT(*) as car_count FROM cars WHERE brand IS NOT NULL GROUP BY brand ORDER BY car_count DESC"
+    )
     rows = cursor.fetchall()
     conn.close()
     return jsonify([{'brand': r['brand'], 'count': r['car_count']} for r in rows])

@@ -9,7 +9,7 @@
     <script src="https://unpkg.com/element-ui/lib/index.js"></script>
     <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
     <style>
-        /* ==================== 全局 ==================== */
+        /* 全局样式 */
         * {
             margin: 0;
             padding: 0;
@@ -20,7 +20,7 @@
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
         }
 
-        /* ==================== 头部 ==================== */
+        /* 头部区域 */
         .app-header {
             background: linear-gradient(135deg, #409EFF 0%, #2b6cb0 100%);
             color: white;
@@ -42,7 +42,7 @@
             display: flex;
             gap: 12px;
         }
-        /* 右上角重置按钮 - 改为深色背景的白色文字 */
+        /* 头部按钮样式 */
         .header-actions .el-button--default {
             color: #fff !important;
             background: rgba(255, 255, 255, 0.15) !important;
@@ -62,14 +62,14 @@
             border-color: rgba(255, 255, 255, 0.8) !important;
         }
 
-        /* ==================== 主体 ==================== */
+        /* 页面主体 */
         .app-main {
             max-width: 1400px;
             margin: 24px auto;
             padding: 0 20px 40px;
         }
 
-        /* ==================== 筛选区域 ==================== */
+        /* 筛选区域 */
         .filter-card {
             background: #fff;
             border-radius: 12px;
@@ -81,7 +81,7 @@
             margin-bottom: 0;
         }
 
-        /* ==================== 车型卡片 ==================== */
+        /* 车型卡片 */
         .car-grid {
             display: grid;
             grid-template-columns: repeat(4, 1fr);
@@ -150,13 +150,13 @@
             flex: 1;
         }
 
-        /* ==================== 分页 ==================== */
+        /* 分页区域 */
         .pagination-wrap {
             margin-top: 32px;
             text-align: center;
         }
 
-        /* ==================== 评论列表 ==================== */
+        /* 评论列表 */
         .comment-item {
             padding: 16px 0;
             border-bottom: 1px solid #f0f0f0;
@@ -205,7 +205,7 @@
             white-space: pre-wrap;
         }
 
-        /* ==================== 情感分析 ==================== */
+        /* 情感分析区域 */
         .sentiment-section {
             padding: 20px 0;
         }
@@ -227,7 +227,7 @@
             margin-top: 12px;
         }
 
-        /* ==================== 空状态 ==================== */
+        /* 空状态 */
         .empty-state {
             text-align: center;
             padding: 60px 0;
@@ -238,7 +238,7 @@
             margin-bottom: 12px;
         }
 
-        /* ==================== 对比对话框 - 重置按钮 ==================== */
+        /* 对比对话框底部 */
         .compare-footer {
             display: flex;
             justify-content: space-between;
@@ -248,7 +248,7 @@
 </head>
 <body>
 <div id="app">
-    <!-- ==================== 头部 ==================== -->
+    <!-- 页面头部 -->
     <header class="app-header">
         <h2>🚗 太平洋汽车网 · 车型口碑分析</h2>
         <div class="header-actions">
@@ -257,7 +257,7 @@
         </div>
     </header>
 
-    <!-- ==================== 主体 ==================== -->
+    <!-- 页面主体 -->
     <main class="app-main">
         <!-- 筛选区 -->
         <div class="filter-card">
@@ -315,7 +315,7 @@
             </el-pagination>
         </div>
 
-        <!-- ==================== 对比对话框 ==================== -->
+        <!-- 车型对比对话框 -->
         <el-dialog title="⚖️ 车型对比" :visible.sync="compareDialog" width="70%" top="5vh">
             <el-table :data="compareCars" border stripe>
                 <el-table-column prop="model_name" label="车型" width="160"></el-table-column>
@@ -340,7 +340,7 @@
             </span>
         </el-dialog>
 
-        <!-- ==================== 评论对话框 ==================== -->
+        <!-- 评论详情对话框 -->
         <el-dialog
             :title="selectedCar ? `📝 ${selectedCar.model_name} 用户评论` : '评论详情'"
             :visible.sync="commentsDialog"
@@ -563,14 +563,14 @@ new Vue({
             this.commentsDialog = true;
             this.loadComments();
         },
-                loadComments() {
+        loadComments() {
             if (!this.selectedCar) return;
             axios.get(`http://localhost:5000/api/cars/comments/${this.selectedCar.car_id}`, {
                 params: { page: this.commentPage, size: this.commentSize }
             }).then(res => {
                 this.comments = res.data.comments;
                 this.commentTotal = res.data.total;
-                // 【修改】使用后端返回的总体平均评分
+                // 直接使用后端返回的平均评分
                 this.avgRatingText = res.data.avg_rating !== null ? String(res.data.avg_rating) : null;
                 this.sentimentScore = res.data.avg_rating !== null ? res.data.avg_rating / 5 : null;
             }).catch(err => {

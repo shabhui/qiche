@@ -13,7 +13,7 @@ class PcautoSpider(scrapy.Spider):
 
     MAX_COMMENT_PAGES = 5
 
-    # ==================== 工具方法 ====================
+    # 工具方法
 
     @staticmethod
     def _extract_car_id(url):
@@ -34,7 +34,7 @@ class PcautoSpider(scrapy.Spider):
                 return response.urljoin(url)
         return None
 
-    # ==================== 主回调 ====================
+    # 主回调
 
     def parse(self, response):
         rows = response.xpath('//tr[td[@class="col2 brand"]]')
@@ -111,7 +111,7 @@ class PcautoSpider(scrapy.Spider):
         for node in comment_nodes:
             yield self._build_comment_item(node, car_id)
 
-        # 直接构造下一页 URL
+        # 直接拼接下一页链接
         next_page_num = current_page + 1
         if next_page_num <= self.MAX_COMMENT_PAGES:
             next_url = f'https://price.pcauto.com.cn/comment/sg{car_id}/t1/p{next_page_num}.html'
@@ -121,7 +121,7 @@ class PcautoSpider(scrapy.Spider):
                 meta={'car_id': car_id, 'page_num': next_page_num}
             )
 
-    # ==================== 评论解析 ====================
+    # 评论解析
 
     def _build_comment_item(self, node, car_id):
         item = PCautoCommentItem()
